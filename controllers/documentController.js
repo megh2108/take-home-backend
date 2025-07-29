@@ -3,32 +3,41 @@ const { extractTextFromPDF, chunkText } = require("../services/pdfService");
 const { getEmbedding } = require("../services/embeddingService");
 const Document = require("../models/Document");
 
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: {
-    fileSize: 10 * 1024 * 1024, // 10MB limit
-    files: 1
-  }
-});
+const upload = multer({ storage: multer.memoryStorage() });
 
 exports.uploadDocument = [
   upload.single("file"),
   async (req, res) => {
     try {
+        console.log("Document Controller")
       if (!req.file) {
         return res.status(400).json({ error: "No file uploaded" });
       }
-      
+
       if (req.file.mimetype !== "application/pdf") {
         return res.status(400).json({ error: "Only PDF files are allowed" });
       }
+      const text = await extractTextFromPDF(req.file.buffer);
+      const chunks = await chunkText(text);
 
-      // ... rest of the existing code ...
+      const embeddings = await Promise.all(
+        chunks.map((chunk) => getEmbedding(chunk))
+      );
+
+      const doc = new Document({
+        filename: req.file.originalname,
+        originalText: text,
+        chunks: chunks.map((text, i) => ({
+          text,
+          embedding: embeddings[i],
+          pageNumber: 1, // Can be extracted from PDF
+        })),
+      });
+
+      await doc.save();
+      res.status(201).json(doc);
     } catch (err) {
-      if (err instanceof multer.MulterError) {
-        return res.status(400).json({ error: "File upload error: " + err.message });
-      }
-      res.status(500).json({ error: "Server error: " + err.message });
+      res.status(500).json({ error: err.message });
     }
-  }
+  },
 ];
